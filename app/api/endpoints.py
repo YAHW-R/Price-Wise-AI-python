@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from app.services.features import calculate_features
-from app.services.inference import predict_scam_probability, calculate_value_score
+from typing import List, Union
+from app.services.inference import engine
 
 router = APIRouter()
 
@@ -16,30 +16,36 @@ class Product(BaseModel):
     reviews_count: int
     availability: bool
     shop: str
+    image_url: str
     product_url: str
 
 @router.post("/analyze")
-async def analyze_product(product: Product):
+async def analyze_products(products: Union[List[Product], Product]):
     """
-    Recibe el JSON del producto y devuelve el análisis de ML.
+    Recibe el JSON del producto (o lista) y devuelve el análisis de ML
+    conservando los datos originales más los campos scam_probability y value_score.
     """
     try:
-        product_dict = product.dict()
+        # Convertir a lista si es un solo producto
+        if isinstance(products, Product):
+            products_list = [products.dict()]
+        else:
+            products_list = [p.dict() for p in products]
         
-        # 1. Feature Engineering
-        features = calculate_features(product_dict)
+        # Realizar análisis por lote
+        analysis_results = engine.analyze_batch(products_list)
         
-        # 2. Inferencia (Mock por ahora)
-        scam_prob = predict_scam_probability(features)
-        value_score = calculate_value_score(features)
+        if analysis_results is None:
+            raise HTTPException(
+                status_code=500, 
+                detail="Los modelos no están entrenados o no se encontraron."
+            )
+            
+        # Si se envió un solo producto, devolver un solo objeto, sino la lista
+        if isinstance(products, Product):
+            return analysis_results[0]
+            
+        return analysis_results
         
-        return {
-            "scam_probability": round(scam_prob, 2),
-            "value_score": round(value_score, 2),
-            "features_used": {
-                "discount_percentage": round(features["discount_percentage"], 2),
-                "trust_score": round(features["trust_score"], 2)
-            }
-        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
